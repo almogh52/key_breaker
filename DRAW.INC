@@ -4,9 +4,75 @@
 ; AUTHOR  : Almog Hamdani 
 ;------------------------------------------
 
+;-----  This segment will hold the contents of the file we open
 SEGMENT FILEBUF para public
         DB 65200 dup (?)
 ENDS
+
+PROC DrawRectangle
+
+;-----  Set Y as the start of the rectangle
+        mov ax, [StartY]
+        mov [Y], ax
+
+@@Rectangle:
+;-----  Set X as the start of the rectangle
+        mov ax, [StartX]
+        mov [X], ax
+
+        mov cx, [SizeWidth] ; Set for loop
+
+@@DrawHLine:
+        call PutPixel
+        inc [X] ; Set next pixel
+        loop @@DrawHLine
+
+        inc [Y] ; Set next line
+
+;-----  Check if didn't reach last line
+        mov ax, [SizeHeight]
+        add ax, [StartY]
+        cmp [Y], ax
+        jbe @@Rectangle
+                      
+        ret
+ENDP DrawRectangle
+
+;------------------------
+;PaintScreen - Paints the entire screen in 1 color
+;------------------------
+;Input:
+;       Color <- The color to paint with
+;Output:
+;       The entire screen with the color
+;Registers:
+;       AX, BX, CX, DX, SI, DI, ES
+;------------------------
+
+PROC PaintScreen
+        mov [X], 0
+        mov [Y], 0
+
+@@Paint:
+        call PutPixel
+
+        inc [X]
+        cmp [X], 320 * 200
+        jne @@Paint
+
+        ret
+ENDP PaintScreen
+
+;------------------------
+;ReadPCX - Reads a PCX file
+;------------------------
+;Input:
+;       FileName <- The PCX file name
+;Output:
+;       FILEBUF <- The contents of the file, FileSize <- The size of the file
+;Registers:
+;       AX, BX, CX, DX
+;------------------------
 
 PROC ReadPCX
 ;-----  Try open file using interrupt
@@ -97,6 +163,17 @@ PROC ReadPCX
         jmp Exit
 
 ENDP
+
+;------------------------
+;DrawPCX - Draws a pcx to a specific location on the screen (Currently only supports default pallete)
+;------------------------
+;Input:
+;       StartX <- The X to start draw in, StartY <- The Y to start draw in, FileName <- The PCX file name
+;Output:
+;       The PCX on the screen
+;Registers:
+;       AX, BX, CX, DX, SI, DI, ES
+;------------------------
 
 PROC DrawPCX
 
