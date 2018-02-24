@@ -10,7 +10,35 @@ SEGMENT FILEBUF para public
 ENDS
 
 PROC DrawRectangle
+;-----  Check if start point is out of bounds, if yes return
+	cmp [StartX], 320
+	jb @@CheckNegX
+	ret ; If out of bounds, return
+	
+@@CheckNegX:
+;-----	Check if the x is negetive
+	cmp [StartX], 0
+	jl @@NegX
+	jmp @@CheckOverflow
 
+@@NegX:
+;----- If negetive reset it and remove it's value from the length
+	mov ax, [StartX]
+	add [SizeWidth], ax
+	mov [StartX], 0
+
+@@CheckOverflow:
+	mov ax, [StartX]
+	add ax, [SizeWidth]
+	cmp ax, 320
+
+	jbe @@SetY
+
+	mov ax, 320
+	sub ax, [StartX]
+	mov [SizeWidth], ax
+
+@@SetY:
 ;-----  Set Y as the start of the rectangle
         mov ax, [StartY]
         mov [Y], ax
@@ -384,3 +412,26 @@ PROC PutPixel
         ret
 ENDP PutPixel
 
+;------------------------
+;GetPixel - Read dot
+;------------------------
+;Input:
+;       X, Y
+;Output:
+;       Color
+;Registers:
+;       AX, DI, ES
+;------------------------
+PROC GetPixel
+        push ax
+        mov di, [Y]
+        mov ax, [Y]
+        shl di, 8
+        shl ax, 6
+        add di, ax
+        add di, [X]
+        mov al, [es:di]
+        mov [Color], al
+        pop ax
+        ret
+ENDP GetPixel
