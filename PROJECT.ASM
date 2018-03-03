@@ -4,7 +4,7 @@
 ; AUTHOR  : Almog Hamdani
 ;------------------------------------------
 
-        %TITLE "Key Breaker"
+		%TITLE "Key Breaker"
 
 		IDEAL
 
@@ -71,7 +71,13 @@ MACRO DrawRect X, Y, Width, Height, Clr
         mov [SizeWidth], Width
         mov [SizeHeight], Height
 
+	push dx
+	push ax
+	push cx
         call DrawRectangle
+	pop cx
+	pop ax
+	pop dx
 ENDM DrawRect
 
 ;------------------------
@@ -110,16 +116,29 @@ EndScreen		equ 320
 MaxX			equ EndScreen - PlayerWidth
 MinX			equ 0
 MaxY			equ 20
+
 PlayerFloorDist		equ 1
 PlayerJumpHeight	equ 50
+
 FloorColor		equ 15
-FloorHeight		equ 10
+FloorSize		equ 10
 FlatFloor		equ 0
+
 TallFloor		equ 1
-TallFloorHeightRangeMin equ 30
-TallFloorHeightRangeMax equ 70
+TallFloorSizeRangeMin	equ 20
+TallFloorSizeRangeMax	equ 70
 TallLowerFlatLength	equ 60
 TallUpperFlatLength	equ 40
+
+LavaFloor		equ 2
+LavaHeight		equ 25
+LavaColor		equ 41
+LavaLowerFlatLength	equ 30
+LavaLength		equ 160 - LavaLowerFlatLength * 2 - FloorSize * 2
+LavaUpperWidthRangeMin  equ 20
+LavaUpperWidthRangeMax  equ 70
+LavaUpperY		equ 80
+LavaWallsHeight		equ 45
 
 ;------------------
 
@@ -143,9 +162,9 @@ SizeWidth        dw ?
 
 Temp             dw ?
 
-MapOrder	 db FlatFloor, TallFloor, FlatFloor
+MapOrder	 db FlatFloor, LavaFloor, FlatFloor
 MapOffset	 dw 0, MidScreen, EndScreen
-MapData		 db 0, 0, 0
+MapData		 dw 0, 50, 0
 
 PlayerPic db 053,053,053,053,053,053,053,053,053,053,053,053,053,053,053
           db 053,018,018,018,018,018,018,018,018,018,018,018,018,018,053
@@ -362,6 +381,16 @@ Exit:
         mov ax, 4C00h
         int 21h
 
+;------------------------
+;Game - This proc is starting the game
+;------------------------
+;Input:
+;       None
+;Output:
+;       The game
+;Registers:
+;       AX, BX, CX, DX, SI, DI, ES
+;------------------------
 PROC Game
         ; Setting background color
         mov [Color], GameBackgroundColor
@@ -396,6 +425,16 @@ PROC Game
         ret
 ENDP Game
 
+;------------------------
+;PrintMap - This is printing the map on the screen
+;------------------------
+;Input:
+;       None
+;Output:
+;       The map on the screen
+;Registers:
+;       AX, BX, CX, DX, SI, DI, ES
+;------------------------
 PROC PrintMap
 ;-----	Init
 	lea si, [MapOrder]
@@ -407,19 +446,29 @@ PROC PrintMap
 	cmp [byte si], FlatFloor
 	je @@Flat
 
+;-----	If current part is a tall part
 	cmp [byte si], TallFloor
 	je @@Tall
+
+;-----	If current part is a lava part
+	cmp [byte si], LavaFloor
+	je @@Lava
 
 	ret
 
 @@Flat:
 ;-----	Draw a flat floor
 	mov ax, [bx]
-	DrawRect ax, FloorY, MidScreen, FloorHeight, FloorColor
+	DrawRect ax, FloorY, MidScreen, FloorSize, FloorColor
 	jmp @@Increase
 
 @@Tall:
 	call DrawTallPart
+
+	jmp @@Increase
+
+@@Lava:
+	call DrawLavaPart
 
 @@Increase:
 ;-----	Point to next map part
@@ -434,26 +483,63 @@ PROC PrintMap
     
 ENDP PrintMap
 
-; BX <- The address of the map offset
+;------------------------
+;TallPartRandomHeight - Creating a random height for the tall part
+;------------------------
+;Input:
+;       BX <- Min, CX <- Max, Temp <- The part' number
+;Output:
+;       Random height
+;Registers:
+;       AX, DI
+;------------------------
+PROC RandomData
+;------	Random height
+	in ax, 40h ; Random number from clock
+
+;-----	Set in cx the max - min
+	sub cx, bx
+	inc cx ; Range + 1
+
+	xor dx, dx ; Reset dx for result
+	div cx ; Divide ax in dx, the modulo will be in dx
+
+	add dx, bx ; Add minimum for fixed range
+
+;-----	Set di to point to current map info
+	lea di, [MapData]
+	shl [Temp], 1 ; Mul by 2
+	add di, [Temp] ; Temp holds the current part number
+	shr [Temp], 1 ; Return original value, divide by 2
+
+	mov [di], dx
+
+	ret
+ENDP RandomData
+
+;------------------------
+;DrawTallPart - This is drawing the tall part on the screen in it's location
+;------------------------
+;Input:
+;       BX <- The address of the map offset, Temp <- The part' number
+;Output:
+;       The tall part on the screen
+;Registers:
+;       AX, BX, CX, DX, DI, ES
+;------------------------
 PROC DrawTallPart	
 ;-----	Drawing first flat
 	mov ax, [bx]
-	DrawRect ax, FloorY, TallLowerFlatLength, FloorHeight, FloorColor
+	DrawRect ax, FloorY, TallLowerFlatLength, FloorSize, FloorColor
 
-;------	Random height
-	in al, 40h ; Random number from clock
-	and ax, TallFloorHeightRangeMax - TallFloorHeightRangeMin ; Getting random between range
-	add al, TallFloorHeightRangeMin ; Add minimum for fixed range
-
-;-----	Set si to point to current map info
+;-----	Set di to point to current map info
 	lea di, [MapData]
+	shl [Temp], 1 ; Mul by 2
 	add di, [Temp] ; Temp holds the current part number
-
-	mov [di], al
+	shr [Temp], 1 ; Return original value, divide by 2
 
 ;-----	Drawing tall
 	; Setting start x
-	mov ax, [bx]
 	add ax, TallLowerFlatLength
 
 	; Setting start y
@@ -461,39 +547,88 @@ PROC DrawTallPart
 	sub dx, [di]
 
 	mov cx, [di] ; Set height
-	add cx, FloorHeight
+	add cx, FloorSize
 
-	; Save registers
-	push dx
-	push ax
-	push cx
-	DrawRect ax, dx, FloorHeight, cx, FloorColor ; Drawing first part
-	pop cx
-	pop ax
-	pop dx
+	DrawRect ax, dx, FloorSize, cx, FloorColor ; Drawing first part
 
-	; Save registers
-	push dx
-	push ax
-	push cx
-	DrawRect ax, dx, TallUpperFlatLength, FloorHeight, FloorColor ; Drawing upper part
-	pop cx
-	pop ax
-	pop dx
+	DrawRect ax, dx, TallUpperFlatLength, FloorSize, FloorColor ; Drawing upper part
 
-	add ax, TallUpperFlatLength - FloorHeight ; Set in ax the x of the second part
+	add ax, TallUpperFlatLength - FloorSize ; Set in ax the x of the second part
 
-	DrawRect ax, dx, FloorHeight, cx, FloorColor ; Drawing second part
+	DrawRect ax, dx, FloorSize, cx, FloorColor ; Drawing second part
 
 ;-----	Drawing second flat
 	mov ax, [bx]
 	add ax, TallLowerFlatLength + TallUpperFlatLength
 
-	DrawRect ax, FloorY, TallLowerFlatLength, FloorHeight, FloorColor
+	DrawRect ax, FloorY, TallLowerFlatLength, FloorSize, FloorColor
 
 	ret
 ENDP DrawTallPart
 
+;------------------------
+;DrawLavaPart - This is drawing the lava part on the screen in it's location
+;------------------------
+;Input:
+;       BX <- The address of the map offset, Temp <- The part' number
+;Output:
+;       The lava part on the screen
+;Registers:
+;       AX, BX, CX, DX, DI, ES
+;------------------------
+PROC DrawLavaPart	
+;-----	Drawing flat
+	mov ax, [bx]
+	DrawRect ax, FloorY, MidScreen, FloorSize, FloorColor
+
+;-----	Drawing first lava wall
+	add ax, LavaLowerFlatLength ; Set the x axis of the first wall
+	mov dx, FloorY - LavaWallsHeight - 1 ; Set y axis
+	DrawRect ax, dx, FloorSize, LavaWallsHeight, FloorColor ; Draw first lava wall
+
+;-----	Drawing lava
+	add ax, FloorSize ; Set the x axis of the lava (the wall + it's width)
+	mov dx, FloorY - LavaHeight - 1 ; Set y axis
+	DrawRect ax, dx, LavaLength, LavaHeight, LavaColor ; Draw the lava
+
+;-----	Set di to point to current map info
+	lea di, [MapData]
+	shl [Temp], 1 ; Mul by 2
+	add di, [Temp] ; Temp holds the current part number
+	shr [Temp], 1 ; Return original value, divide by 2
+
+;-----	Drawing upper flat
+	; Setting start x
+	mov ax, [bx] ; Get part' offset
+	add ax, LavaLowerFlatLength + FloorSize + (LavaLength) / 2 ; Set x in the middle of the lava
+	mov cx, [di] ; Set upper length
+	shr cx, 1 ; Div the length by 2
+	sub ax, cx ; Set the x axis of the upper flat (Middle Lava - Upper length / 2)
+	shl cx, 1 ; Return original value
+
+	mov dx, FloorY - LavaUpperY ; Set y axis
+	DrawRect ax, dx, cx, FloorSize, FloorColor ; Drawing upper flat
+
+;-----	Drawing second wall
+	mov ax, [bx] ; Get part' offset
+	add ax, LavaLowerFlatLength + FloorSize + LavaLength ; Set the x of the second wall (Lava first flat width + first wall width + lava width)
+
+	mov dx, FloorY - LavaWallsHeight - 1 ; Set y axis
+	DrawRect ax, dx, FloorSize, LavaWallsHeight, FloorColor ; Draw second lava wall
+
+	ret
+ENDP DrawLavaPart
+
+;------------------------
+;MoveMap - This is moving the map left and adding new part if needed
+;------------------------
+;Input:
+;       None
+;Output:
+;       The map will be moved but not redrawen
+;Registers:
+;       AX, BX, SI
+;------------------------
 PROC MoveMap
 ;-----	Decrease all parts' offsets
 	lea bx, [MapOffset]
@@ -521,19 +656,48 @@ PROC MoveMap
 	mov [MapOrder + 1], al
 
 ;-----	Move all parts' data by 1 backwards and randomize the new one
-	mov al, [MapData + 1]
-	mov [MapData], al
+	mov ax, [MapData + 2]
+	mov [MapData], ax
 
-	mov al, [MapData + 2]
-	mov [MapData + 1], al
+	mov ax, [MapData + 4]
+	mov [MapData + 2], ax
 
 ;-----	Random new part, 0 - 1 for now
-	xor ax, ax
-	in al, 40h
-	and ax, 0
+	in ax, 40h ; Get number from time port
+	xor dx, dx
+	mov cx, 2 + 1 ; Between 0 - 2
+	div cx ; Divide ax in cx, the modulo will be in dx
+	mov al, dl ; Result is stored in dl becuase of the div
 
-	mov [MapOrder + 2], al
+	mov [MapOrder + 2], al ; Set new part
 
+;-----	Check if the new part is a tall floor
+	cmp al, TallFloor
+	je @@Tall
+
+;-----	Check if the new part is a lava floor
+	cmp al, LavaFloor
+	je @@Lava
+
+	jmp @@ResetOffsets ; If none of the above, just jump to reset offsets
+
+@@Tall:
+;-----	Get a random height for the new part
+	mov [Temp], 2
+	mov bx, TallFloorSizeRangeMin ; Set min
+	mov cx, TallFloorSizeRangeMax ; Set max
+	call RandomData
+
+	jmp @@ResetOffsets
+
+@@Lava:
+;-----	Get a random width for the new part
+	mov [Temp], 2
+	mov bx, LavaUpperWidthRangeMin ; Set min
+	mov cx, LavaUpperWidthRangeMax ; Set max
+	call RandomData
+
+@@ResetOffsets:
 ;-----	Reset offsets
 	mov [MapOffset], 0
 	mov [MapOffset + 2], MidScreen
@@ -543,6 +707,16 @@ PROC MoveMap
 
 ENDP MoveMap
 
+;------------------------
+;FixMap - This is fixing the map on movement
+;------------------------
+;Input:
+;       None
+;Output:
+;       The map on the screen fixed after movement
+;Registers:
+;       AX, BX, SI
+;------------------------
 PROC FixMap
 ;-----	Init
     	lea si, [MapOrder]
@@ -554,25 +728,35 @@ PROC FixMap
 	cmp [byte si], FlatFloor
 	je @@Flat
 
+;-----	If current part is a tall part
 	cmp [byte si], TallFloor
 	je @@Tall
+
+;-----	If current part is a lava part
+	cmp [byte si], LavaFloor
+	je @@Lava
 
 	ret
 
 @@Flat:
 ;-----	Add a part in the start
 	mov ax, [bx]
-	DrawRect ax, FloorY, 1, FloorHeight, FloorColor
+	DrawRect ax, FloorY, 1, FloorSize, FloorColor
 
 ;-----	Remove a part from the end
 	mov ax, [bx]
 	add ax, MidScreen
-	DrawRect ax, FloorY, 1, FloorHeight, GameBackgroundColor
+	DrawRect ax, FloorY, 1, FloorSize, GameBackgroundColor
+
 	jmp @@Increase
 
 @@Tall:
 	call FixTallPart
-	jmp @@Flat ; Do as flat as well
+	jmp @@Flat ; Do as flat as well to fix the flat sides of the part
+
+@@Lava:
+	call FixLavaPart
+	jmp @@Flat ; Do as flat as well to fix the flat sides of the part
 
 @@Increase:
 ;-----	Point to next map part
@@ -586,15 +770,36 @@ PROC FixMap
 	ret
 ENDP FixMap
 
-; BX <- The address of the map offset
+;------------------------
+;FixTallPart - This is fixing the tall part on movement
+;------------------------
+;Input:
+;       BX <- The address of the map offset, Temp <- The part' number
+;Output:
+;       The tall part on the screen fixed
+;Registers:
+;       AX, BX, CX, DX, SI, DI, ES
+;------------------------
 PROC FixTallPart
+;-----	Check if the entire tall part except the last flat part is inside the screen, if not, it needs to be drawn
+	cmp [word bx], EndScreen - TallLowerFlatLength - TallUpperFlatLength
+	jg @@DrawPart
+
+	jmp @@FixPart
+
+@@DrawPart:
+	call DrawTallPart ; Draw part and then fix it
+
+@@FixPart:
 ;-----	Set x
 	mov ax, [bx]
 	add ax, TallLowerFlatLength + 1
 
-;-----	Point to part' data
+;-----	Set di to point to current map info
 	lea di, [MapData]
-	add di, [Temp]
+	shl [Temp], 1 ; Mul by 2
+	add di, [Temp] ; Temp holds the current part number
+	shr [Temp], 1 ; Return original value, divide by 2
 
 ;-----	Set y
 	mov cx, FloorY
@@ -604,53 +809,116 @@ PROC FixTallPart
 	mov dx, [di] ; Take height from map data
 	dec dx
 
-	; Save registers
-	push ax
-	push dx
-	push cx
 	DrawRect ax, cx, 1, dx, FloorColor ; Add a part
-	pop cx
-	pop dx
-	pop ax
 
-	add ax, FloorHeight ; Set new x
-	add cx, FloorHeight + 1 ; Set new y
+	add ax, FloorSize ; Set new x
+	add cx, FloorSize + 1 ; Set new y
 	
-	; Save registers
-	push ax
-	push dx
-	push cx
 	DrawRect ax, cx, 1, dx, GameBackgroundColor ; Remove a part
-	pop cx
-	pop dx
-	pop ax
 
-	add ax, TallUpperFlatLength - FloorHeight * 2 ; Set new x
+	add ax, TallUpperFlatLength - FloorSize * 2 ; Set new x
 
-	; Save registers
-	push ax
-	push dx
-	push cx
 	DrawRect ax, cx, 1, dx, FloorColor ; Add a part
-	pop cx
-	pop dx
-	pop ax
 
-	add ax, FloorHeight ; Set new x
-	sub cx, FloorHeight + 1 ; Set new y
+	add ax, FloorSize ; Set new x
+	sub cx, FloorSize + 1 ; Set new y
 	
-	; Save registers
-	push ax
-	push dx
-	push cx
 	DrawRect ax, cx, 1, dx, GameBackgroundColor ; Remove a part
-	pop cx
-	pop dx
-	pop ax
 
 	ret
 ENDP FixTallPart
 
+;------------------------
+;FixLavaPart - This is fixing the lava part on movement
+;------------------------
+;Input:
+;       BX <- The address of the map offset, Temp <- The part' number
+;Output:
+;       The tall part on the screen fixed
+;Registers:
+;       AX, BX, CX, DX, SI, DI, ES
+;------------------------
+PROC FixLavaPart
+;-----	Check if the entire lava part except the last flat part is inside the screen, if not, it needs to be drawn
+	cmp [word bx], EndScreen - LavaLowerFlatLength - FloorSize * 2 - (LavaLength)
+	jg @@DrawPart
+
+	jmp @@FixPart
+
+@@DrawPart:
+	call DrawLavaPart ; Draw part and then fix it
+
+@@FixPart:
+;-----	Adding a part before first wall
+	mov ax, [bx]
+	add ax, LavaLowerFlatLength + 1 ; Set x
+
+	mov dx, FloorY - LavaWallsHeight - 1 ; Set y
+
+	DrawRect ax, dx, 1, LavaWallsHeight, FloorColor ; Add a part
+
+;-----	Adding a lava part after first wall
+	add ax, FloorSize ; Set x
+
+	mov dx, FloorY - LavaHeight - 1 ; Set y
+
+	DrawRect ax, dx, 1, LavaHeight, LavaColor ; Add a part
+
+;-----	Removing a part on top the last part in case there is floor color there
+	mov cx, LavaWallsHeight - LavaHeight ; Set height as the diff between the lava height and the wall
+	sub dx, cx ; Set y
+	dec cx
+
+	DrawRect ax, dx, 1, cx, GameBackgroundColor ; Remove a part
+
+;-----	Add a part before second wall
+	add ax, LavaLength ; Set x as after the lava
+	mov dx, FloorY - LavaWallsHeight - 1 ; Set y
+
+	DrawRect ax, dx, 1, LavaWallsHeight, FloorColor ; Add a part
+
+;-----	Remove a part after second wall
+	add ax, FloorSize ; Set x as after the wall
+
+	DrawRect ax, dx, 1, LavaWallsHeight, GameBackgroundColor ; Remove a part
+
+;-----	Set di to point to current map info
+	lea di, [MapData]
+	shl [Temp], 1 ; Mul by 2
+	add di, [Temp] ; Temp holds the current part number
+	shr [Temp], 1 ; Return original value, divide by 2
+
+;-----	Add a part in the upper flat
+	; Setting start x
+	mov ax, [bx] ; Get part' offset
+	add ax, LavaLowerFlatLength + FloorSize + (LavaLength) / 2 ; Set x in the middle of the lava
+	mov cx, [di] ; Set upper length
+	shr cx, 1 ; Div the length by 2
+	sub ax, cx ; Set the x axis of the upper flat (Middle Lava - Upper length / 2)
+	shl cx, 1 ; Return original value
+
+	mov dx, FloorY - LavaUpperY ; Set y axis
+
+	DrawRect ax, dx, 1, FloorSize, FloorColor ; Add a part
+
+;-----	Remove a part from the end of the upper flat
+	add ax, cx ; Add the size of the part to the x to get the end
+
+	DrawRect ax, dx, 1, FloorSize, GameBackgroundColor ; Remove a part
+
+	ret
+ENDP FixLavaPart
+
+;------------------------
+;PlayerJump - This is making the player jump
+;------------------------
+;Input:
+;	None
+;Output:
+;       The player to jump
+;Registers:
+;       DX
+;------------------------
 PROC PlayerJump
 	mov dx, MaxY
 
@@ -667,8 +935,18 @@ PROC PlayerJump
 	
 ENDP PlayerJump
 
+;------------------------
+;PlayerGravity - This is making the player to jump down
+;------------------------
+;Input:
+;       None
+;Output:
+;       The player to jump down
+;Registers:
+;       AX, DX
+;------------------------
 PROC PlayerGravity
-    mov dx, 0 ; Will be used to fix the double movement issue
+	mov dx, 0 ; Will be used to fix the double movement issue
 
     @@Gravity:
 ;-----	Check if reached floor
@@ -720,6 +998,16 @@ PROC PlayerGravity
         ret
 ENDP PlayerGravity
 
+;------------------------
+;CheckPlayerMove - This is checking if the player has moved and moving it if needed
+;------------------------
+;Input:
+;       None
+;Output:
+;       The player to be moved but not redrawen
+;Registers:
+;       AX
+;------------------------
 PROC CheckPlayerMove
         in al, 60h ; Get scan code from keybaord port
 
