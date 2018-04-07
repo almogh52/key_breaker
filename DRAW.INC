@@ -1,7 +1,7 @@
 ;------------------------------------------
-; PURPOSE : Key breaker' draw tools 
-; SYSTEM  : Turbo Assembler Ideal Mode  
-; AUTHOR  : Almog Hamdani 
+; PURPOSE : Key breaker' draw tools
+; SYSTEM  : Turbo Assembler Ideal Mode
+; AUTHOR  : Almog Hamdani
 ;------------------------------------------
 
 ;-----  This segment will hold the contents of the file we open
@@ -11,10 +11,10 @@ ENDS
 
 PROC DrawRectangle
 ;-----  Check if start point is out of bounds, if yes return
-	cmp [StartX], 320
+	cmp [StartX], ScreenWidth
 	jb @@CheckNegX
 	ret ; If out of bounds, return
-	
+
 @@CheckNegX:
 ;-----	Check if the x is negetive
 	cmp [StartX], 0
@@ -30,11 +30,11 @@ PROC DrawRectangle
 @@CheckOverflow:
 	mov ax, [StartX]
 	add ax, [SizeWidth]
-	cmp ax, 320
+	cmp ax, ScreenWidth
 
 	jbe @@SetY
 
-	mov ax, 320
+	mov ax, ScreenWidth
 	sub ax, [StartX]
 	mov [SizeWidth], ax
 
@@ -62,7 +62,7 @@ PROC DrawRectangle
         add ax, [StartY]
         cmp [Y], ax
         jbe @@Rectangle
-                      
+
         ret
 ENDP DrawRectangle
 
@@ -76,7 +76,6 @@ ENDP DrawRectangle
 ;Registers:
 ;       AX, BX, CX, DX, SI, DI, ES
 ;------------------------
-
 PROC PaintScreen
         mov [X], 0
         mov [Y], 0
@@ -101,7 +100,6 @@ ENDP PaintScreen
 ;Registers:
 ;       AX, BX, CX, DX
 ;------------------------
-
 PROC ReadPCX
 ;-----  Try open file using interrupt
         mov ah, 3Dh ; Interrupt entry
@@ -127,10 +125,6 @@ PROC ReadPCX
 
 ;-----  Error occurred
         jc @@Error
-
-;-----  Check if file is too big
-        cmp dx, 0
-        jne @@Error
 
 ;-----  Set file size
         mov [FileSize], ax
@@ -189,7 +183,6 @@ PROC ReadPCX
         lea dx, [PCXErrorMSG]
         int 21h
         jmp Exit
-
 ENDP
 
 ;------------------------
@@ -202,9 +195,7 @@ ENDP
 ;Registers:
 ;       AX, BX, CX, DX, SI, DI, ES
 ;------------------------
-
 PROC DrawPCX
-
         call ReadPCX
 
 ;-----  Set extra segment as file buffer
@@ -236,8 +227,9 @@ PROC DrawPCX
         jb @@DrawNormal
 
         sub [Color], 192 ; In cx there is the amount of pixels to write
-        mov ch, 0h ; Reset cx
-        mov cl, [Color]
+        xor ch, ch ; Reset cx
+        mov cl, [Color] ; Set in cx the length to use for loop
+
         mov al, [es:si]
         mov [Color], al
         inc si ; Point to next byte
@@ -292,6 +284,15 @@ PROC DrawPCX
 
         inc [Y] ; Set next line
 
+;-----  Check if the width of the image is odd or even, if it is odd, increase ptr by 1 because of 0 in the end, else continue
+        mov ax, [ImageWidth]
+        and ax, 1
+        cmp ax, 1
+        jne @@LineCheck
+
+        inc si
+
+@@LineCheck:
 ;-----  Check if the line was the last line
         mov bx, [StartY]
         add bx, [ImageHeight]
@@ -329,7 +330,6 @@ ENDP DrawPCX
 ;Registers:
 ;       AX, CX, DX, SI, DI, ES
 ;------------------------
-
 PROC ClearSprite
         push dx ; Save sprite' original width
 
@@ -356,35 +356,120 @@ ENDP ClearSprite
 ;PrintSprite - Prints a sprite to the screen
 ;------------------------
 ;Input:
-;       X, Y, CX <- Sprite' height, DX <- Sprite' width, SI <- Sprite' offset
+;       StartX, StartY, SizeWidth, SizeHeight, SI <- Sprite' offset
+;       Carry flag on -> Negetive and Overflow check
+;       ImageFlipped -> Is the image should be drawn fliiped
+;       Note: Flipped image and image checks ain't working together, you can only use one of of them
 ;Output:
 ;       None
 ;Registers:
-;       AX, CX, DX, SI, DI, ES
+;       AX, SI, DI, ES
 ;------------------------
-
 PROC PrintSprite
-        push dx ; Save sprite' original width
+        mov [SkipColumns], 0 ; Reset the amount of columns that needed to be skipped
+
+        jnc @@SetStartPosition
+
+;-----  Check if start point is out of bounds, if yes return
+	cmp [StartX], ScreenWidth
+	jl @@OutOfBounds
+	ret ; If out of bounds, return
+
+@@OutOfBounds:
+        mov [ImageFlipped], False ; Reset image flipped
+
+;-----  Check if the drawen sprite will not appear on the screen by adding to it's x value it's width
+        mov ax, [StartX]
+        add ax, [SizeWidth]
+        cmp ax, 0
+        jg @@NegX
+        ret
+
+@@NegX:
+;-----  Check if we got a negetive x, if we did, we need to handle it
+        cmp [StartX], 0
+        jg @@CheckOverflow
+
+@@FixNegX:
+;-----  Get the absolute number of the amount of columns needed to be skipped
+        mov ax, [StartX]
+        xor ax, 0FFFFh
+        sub ax, 0FFFFh
+
+        mov [SkipColumns], ax ; Set the amount of columns needed to be skipepd
+
+;-----  Remove from the width the wanted columns that needed to be skipped
+        sub [SizeWidth], ax
+
+        mov [StartX], 0 ; Reset the x value to 0
+
+        add si, [SkipColumns] ; Skip the amount of columns needed from the start
+        jmp @@SetStartPosition
+
+@@CheckOverflow:
+;-----  Check for overflow, that the sprite is drawing in the other side as well
+        mov ax, [StartX]
+        add ax, [SizeWidth]
+        cmp ax, ScreenWidth
+        jle @@SetStartPosition
+
+@@FixOverflow:
+;-----  Get the amount of columns that need to be skipped by subbing the screen size from the overflow amount
+        sub ax, ScreenWidth
+        mov [SkipColumns], ax
+
+;-----  Get the new width of the sprite without the columns that are going to be skipped
+        sub [SizeWidth], ax
+
+@@SetStartPosition:
+;-----  Set the starting position of printing the sprite
+        mov ax, [StartY]
+        mov [Y], ax
+
+        mov ax, [StartX]
+        mov [X], ax
+
+        mov dx, [SizeWidth] ; Set width for line
+
+        mov [Temp], 1 ; Set normal offset
+
+;-----  If the image is flipped, reverse offset
+        cmp [ImageFlipped], True
+        jne @@Cycle
+
+        mov [Temp], -1
+        add si, [SizeWidth] ; Start from the end of the line
+        dec si
 
 @@Cycle:
         mov al, [si]
         mov [Color], al ; Get pixel' color and set in cl
         call PutPixel
-        inc si ; Point to next pixel' color
+        add si, [Temp] ; Point to next pixel' color by adding the offset that is saved in the temp byte var
         inc [X] ; Move pixel' x by 1
+
         dec dx ; Decrease width by 1
         jnz @@Cycle ; While we didn't reach 0 (End of line), keep on cycle
 
-        pop dx ; Return sprite' original width
-        push dx ; Save width in stack
+        cmp [ImageFlipped], True
+        jne @@Normal
 
-        sub [X], dx ; Set ax to start of line again
+@@HandleFlipped:
+        add si, [SizeWidth] ; Go back to end of current line
+        add si, [SizeWidth] ; Start from the end of the new line
+
+@@Normal:
+        add si, [SkipColumns] ; Skip the amount of columns needed
+
+        mov ax, [StartX]
+        mov [X], ax ; Set ax to start of line again
         inc [Y] ; Point to a new line
 
-        dec cx ; Decrease sprite' height
+        mov dx, [SizeWidth] ; Set width for line
+
+        dec [SizeHeight] ; Decrease sprite' height
         jnz @@Cycle
 
-        pop dx ; Clean stack
         ret
 ENDP PrintSprite
 
